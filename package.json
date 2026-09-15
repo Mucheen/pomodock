@@ -1,0 +1,60 @@
+{
+  "name": "pomodock",
+  "version": "0.1.0",
+  "private": true,
+  "author": "Pomodock",
+  "description": "A cross-platform edge-docked Pomodoro timer",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5188 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5188 electron .\"",
+    "build": "vite build",
+    "dist": "npm run build && electron-builder --config.electronDist=node_modules/electron/dist",
+    "dist:mac": "npm run build && electron-builder --mac --config.electronDist=node_modules/electron/dist",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.pomodock.app",
+    "productName": "Pomodock",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.3.0",
+    "wait-on": "^9.1.0"
+  }
+}
