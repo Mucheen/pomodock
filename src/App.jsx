@@ -290,7 +290,11 @@ function App() {
           onClick={() => runAction(() => state.status === 'running' ? api.pause() : api.start())}
         >
           <span>{state.status === 'running' ? 'Ⅱ' : '▶'}</span>
-          {state.status === 'running' ? '暂停' : state.status === 'paused' ? '继续' : '开始专注'}
+          {state.status === 'running'
+            ? '暂停'
+            : state.status === 'paused'
+              ? '继续'
+              : state.phase === 'focus' ? '开始专注' : '开始休息'}
         </button>
         <button className="secondary-button" onClick={() => runAction(() => api.skip())} aria-label="跳过当前阶段">↠</button>
       </section>
