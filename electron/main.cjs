@@ -1,13 +1,14 @@
 const { app, BrowserWindow, ipcMain, Notification, screen } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
+const { normalizeStatistics, refreshStatisticsDate, recordFocusCompletion, statisticsSummary } = require('./statistics.cjs')
 
 const COLLAPSED_SIZE = { width: 60, height: 148 }
 const EXPANDED_SIZE = { width: 392, height: 620 }
 const DEFAULT_CONFIG = {
   focusMinutes: 25,
   shortBreakMinutes: 5,
-  longBreakMinutes: 15,
+  longBreakMinutes: 25,
   roundsBeforeLongBreak: 4,
 }
 
@@ -25,7 +26,9 @@ function createInitialState() {
     status: 'idle',
     remainingMs: DEFAULT_CONFIG.focusMinutes * 60_000,
     targetEndAt: null,
-    completedFocusRounds: 0,
+    ...normalizeStatistics(),
+    cycleVersion: 1,
+    cycleFocusRounds: 0,
     alarm: false,
     nextPhase: null,
   }
@@ -61,11 +64,28 @@ function sanitizeConfig(input = {}) {
 function loadState() {
   try {
     const persisted = JSON.parse(fs.readFileSync(stateFile(), 'utf8'))
+    if (!persisted || typeof persisted !== 'object' || Array.isArray(persisted)) throw new Error('Invalid timer state')
+    const needsMigration = persisted.statisticsVersion !== 1
+    if (needsMigration) {
+      const backupFile = path.join(app.getPath('userData'), 'timer-state.before-statistics.json')
+      try {
+        if (!fs.existsSync(backupFile)) fs.copyFileSync(stateFile(), backupFile)
+      } catch (error) {
+        console.error('Unable to back up timer state:', error)
+      }
+    }
     state = {
       ...createInitialState(),
       ...persisted,
       config: sanitizeConfig(persisted.config),
+      ...normalizeStatistics(persisted),
     }
+
+    // Undated legacy totals never count towards a newly introduced cycle.
+    state.cycleFocusRounds = persisted.cycleVersion === 1 && Number.isSafeInteger(persisted.cycleFocusRounds)
+      ? Math.min(state.config.roundsBeforeLongBreak, Math.max(0, persisted.cycleFocusRounds))
+      : 0
+    state.cycleVersion = 1
 
     if (!['focus', 'shortBreak', 'longBreak'].includes(state.phase)) state.phase = 'focus'
     if (!['idle', 'running', 'paused'].includes(state.status)) state.status = 'idle'
@@ -73,6 +93,7 @@ function loadState() {
       state.status = 'paused'
       state.targetEndAt = null
     }
+    saveState()
   } catch {
     state = createInitialState()
   }
@@ -88,11 +109,12 @@ function saveState() {
 }
 
 function publicState() {
+  if (refreshStatisticsDate(state)) saveState()
   const remainingMs = state.status === 'running'
     ? Math.max(0, state.targetEndAt - Date.now())
     : Math.max(0, state.remainingMs)
 
-  return { ...state, remainingMs, collapsed }
+  return { ...state, ...statisticsSummary(state), remainingMs, collapsed }
 }
 
 function broadcast() {
@@ -103,15 +125,21 @@ function broadcast() {
 
 function nextPhaseAfterCurrent() {
   if (state.phase !== 'focus') return 'focus'
-  const roundsAfterCompletion = state.completedFocusRounds + 1
-  return roundsAfterCompletion % state.config.roundsBeforeLongBreak === 0
+  const roundsAfterCompletion = state.cycleFocusRounds + 1
+  return roundsAfterCompletion >= state.config.roundsBeforeLongBreak
     ? 'longBreak'
     : 'shortBreak'
 }
 
 function notificationCopy(completedPhase) {
   if (completedPhase === 'focus') {
+    if (state.nextPhase === 'longBreak') {
+      return { title: '本组专注完成', body: `${state.config.roundsBeforeLongBreak} 轮专注已完成，开始 ${state.config.longBreakMinutes} 分钟长休息吧。` }
+    }
     return { title: '专注完成', body: '做得好，起来活动一下吧。' }
+  }
+  if (completedPhase === 'longBreak') {
+    return { title: '长休息结束', body: '本组循环结束，准备好后开始下一组专注。' }
   }
   return { title: '休息结束', body: '准备好后，开始下一轮专注。' }
 }
@@ -141,18 +169,29 @@ function notifyCompletion(completedPhase) {
 
 function completePhase() {
   const completedPhase = state.phase
+  // On wake/relaunch, credit the scheduled completion day, not the later wake day.
+  const completedAt = state.targetEndAt ?? Date.now()
   state.remainingMs = 0
   state.targetEndAt = null
   state.status = 'idle'
   state.alarm = true
   state.nextPhase = nextPhaseAfterCurrent()
-  if (completedPhase === 'focus') state.completedFocusRounds += 1
+  if (completedPhase === 'focus') {
+    recordFocusCompletion(state, completedAt, state.config.focusMinutes)
+    state.cycleFocusRounds = Math.min(state.config.roundsBeforeLongBreak, state.cycleFocusRounds + 1)
+  } else if (completedPhase === 'longBreak') {
+    state.cycleFocusRounds = 0
+  }
   saveState()
   showExpanded()
   notifyCompletion(completedPhase)
 }
 
 function tick() {
+  if (refreshStatisticsDate(state)) {
+    saveState()
+    broadcast()
+  }
   if (state.status !== 'running') return
   state.remainingMs = Math.max(0, state.targetEndAt - Date.now())
   if (state.remainingMs <= 0) completePhase()
@@ -180,6 +219,7 @@ function pauseTimer() {
 }
 
 function resetTimer() {
+  if (state.alarm) return finishAlarm(false)
   state.status = 'idle'
   state.alarm = false
   state.nextPhase = null
@@ -200,6 +240,8 @@ function switchToPhase(phase) {
 }
 
 function skipPhase() {
+  if (state.alarm) return finishAlarm(false)
+  if (state.phase === 'longBreak') state.cycleFocusRounds = 0
   switchToPhase(state.phase === 'focus' ? 'shortBreak' : 'focus')
   saveState()
   broadcast()
@@ -272,11 +314,8 @@ function registerIpc() {
     const wasRunning = state.status === 'running'
     if (wasRunning) pauseTimer()
     state.config = sanitizeConfig(config)
-    state.remainingMs = durationFor(state.phase)
-    state.status = 'idle'
-    state.alarm = false
-    state.nextPhase = null
-    state.targetEndAt = null
+    state.cycleFocusRounds = 0
+    switchToPhase('focus')
     saveState()
     broadcast()
     return publicState()

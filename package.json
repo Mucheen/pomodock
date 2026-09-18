@@ -1,11 +1,12 @@
 {
   "name": "pomodock",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "author": "Pomodock",
   "description": "A cross-platform edge-docked Pomodoro timer",
   "main": "electron/main.cjs",
   "scripts": {
+    "test": "node --test",
     "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5188 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5188 electron .\"",
     "build": "vite build",
     "dist": "npm run build && electron-builder --config.electronDist=node_modules/electron/dist",
