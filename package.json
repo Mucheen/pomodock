@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "author": "Pomodock",
+  "license": "MIT",
   "description": "A cross-platform edge-docked Pomodoro timer",
   "main": "electron/main.cjs",
   "scripts": {

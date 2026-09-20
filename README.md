@@ -62,3 +62,7 @@ npm run dist:win
 - Vite
 
 Pomodock 的计时和设置保存在本机，不需要账号或网络连接。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE) 开源。
