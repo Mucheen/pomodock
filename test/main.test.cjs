@@ -60,6 +60,19 @@ test('real tick refreshes an idle app at midnight and preserves yesterday', () =
   assert.equal(app.broadcasts, 1)
 })
 
+test('reopening on a new day shows zero today before the first timer tick', () => {
+  const app = harness({
+    statisticsVersion: 1,
+    statisticsDate: '2026-09-17',
+    completedFocusRounds: 1,
+    dailyRecords: { '2026-09-17': { focusRounds: 1, focusMinutes: 25 } },
+  }, '2026-09-18T08:00:00')
+  assert.equal(app.getState().statisticsDate, '2026-09-18')
+  assert.equal(app.getState().todayFocusRounds, 0)
+  assert.equal(app.getState().todayFocusMinutes, 0)
+  assert.deepEqual(JSON.parse(app.files.get('/isolated/timer-state.json')).statisticsDate, '2026-09-18')
+})
+
 test('legacy migration backs up the original and survives a reload', () => {
   const original = { completedFocusRounds: 3, phase: 'shortBreak' }
   const app = harness(original)

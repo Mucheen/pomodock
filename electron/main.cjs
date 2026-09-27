@@ -93,6 +93,8 @@ function loadState() {
       state.status = 'paused'
       state.targetEndAt = null
     }
+    // Refresh the visible daily counter before the first renderer state is sent.
+    refreshStatisticsDate(state)
     saveState()
   } catch {
     state = createInitialState()
