@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, screen } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, Notification, powerMonitor, screen } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const { normalizeStatistics, refreshStatisticsDate, recordFocusCompletion, statisticsSummary } = require('./statistics.cjs')
@@ -116,13 +116,36 @@ function publicState() {
     ? Math.max(0, state.targetEndAt - Date.now())
     : Math.max(0, state.remainingMs)
 
-  return { ...state, ...statisticsSummary(state), remainingMs, collapsed }
+  // Keep the calendar in the main process. Timer updates only need the summary.
+  const { dailyRecords, ...timerState } = state
+  return { ...timerState, ...statisticsSummary(state), remainingMs, collapsed }
+}
+
+function historyState() {
+  return { dailyRecords: state.dailyRecords, legacyFocusRounds: state.legacyFocusRounds }
+}
+
+function scheduleTick() {
+  clearTimeout(ticker)
+  const now = Date.now()
+  const midnight = new Date(now)
+  midnight.setHours(24, 0, 0, 0)
+  let delay = Math.min(60_000, Math.max(1, midnight.getTime() - now))
+  if (state.status === 'running') {
+    const remaining = Math.max(0, state.targetEndAt - now)
+    const resolution = collapsed ? 60_000 : 1000
+    // Wake at the next displayed second/minute or the exact completion deadline.
+    const nextBoundary = remaining - (Math.ceil(remaining / resolution) - 1) * resolution
+    delay = Math.min(delay, Math.max(1, nextBoundary))
+  }
+  ticker = setTimeout(tick, delay)
 }
 
 function broadcast() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('timer:state', publicState())
   }
+  scheduleTick()
 }
 
 function nextPhaseAfterCurrent() {
@@ -190,13 +213,18 @@ function completePhase() {
 }
 
 function tick() {
-  if (refreshStatisticsDate(state)) {
-    saveState()
-    broadcast()
+  const dateChanged = refreshStatisticsDate(state)
+  if (dateChanged) saveState()
+  if (state.status !== 'running') {
+    if (dateChanged) broadcast()
+    else scheduleTick()
+    return
   }
-  if (state.status !== 'running') return
   state.remainingMs = Math.max(0, state.targetEndAt - Date.now())
-  if (state.remainingMs <= 0) completePhase()
+  if (state.remainingMs <= 0) {
+    completePhase()
+    return
+  }
   broadcast()
 }
 
@@ -288,7 +316,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
     },
   })
 
@@ -312,6 +340,7 @@ function createWindow() {
 
 function registerIpc() {
   ipcMain.handle('timer:get-state', () => publicState())
+  ipcMain.handle('timer:get-history', () => historyState())
   ipcMain.handle('timer:configure', (_event, config) => {
     const wasRunning = state.status === 'running'
     if (wasRunning) pauseTimer()
@@ -337,11 +366,13 @@ function registerIpc() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null)
   if (process.platform === 'win32') app.setAppUserModelId('com.pomodock.app')
   loadState()
   registerIpc()
   createWindow()
-  ticker = setInterval(tick, 500)
+  scheduleTick()
+  powerMonitor.on('resume', tick)
   screen.on('display-metrics-changed', () => positionWindow(collapsed))
   screen.on('display-removed', () => positionWindow(collapsed))
 
@@ -356,7 +387,7 @@ app.on('second-instance', () => {
 })
 
 app.on('before-quit', () => {
-  clearInterval(ticker)
+  clearTimeout(ticker)
   saveState()
 })
 

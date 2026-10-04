@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('pomodoro', {
   getState: () => ipcRenderer.invoke('timer:get-state'),
+  getHistory: () => ipcRenderer.invoke('timer:get-history'),
   configure: (config) => ipcRenderer.invoke('timer:configure', config),
   start: () => ipcRenderer.invoke('timer:start'),
   pause: () => ipcRenderer.invoke('timer:pause'),

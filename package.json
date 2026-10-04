@@ -1,6 +1,6 @@
 {
   "name": "pomodock",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "author": "Pomodock",
   "license": "MIT",
@@ -8,6 +8,8 @@
   "main": "electron/main.cjs",
   "scripts": {
     "test": "node --test",
+    "test:smoke": "npm run build && electron scripts/smoke-check.cjs",
+    "benchmark:memory": "npm run build && electron scripts/memory-benchmark.cjs",
     "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5188 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5188 electron .\"",
     "build": "vite build",
     "dist": "npm run build && electron-builder --config.electronDist=node_modules/electron/dist",
@@ -24,6 +26,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "LICENSE",
       "package.json"
     ],
     "mac": {

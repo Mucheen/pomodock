@@ -209,10 +209,7 @@ body[data-phase='longBreak'] {
 .timer-status i.is-running, .edge-tab__status.is-running {
   background: var(--accent);
   box-shadow: 0 0 0 4px var(--accent-soft);
-  animation: pulse 1.6s infinite;
 }
-
-@keyframes pulse { 50% { opacity: 0.5; } }
 
 .session-progress {
   margin: 0 28px;

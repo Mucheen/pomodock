@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { calendarDays, dateKey, monthSummary, roundProgress, selectionInMonth, shiftMonth } from './history.mjs'
+import { createAlarmSound } from './alarm.mjs'
 
 const PHASES = {
   focus: { label: '专注时间', shortLabel: '专注', icon: '●' },
@@ -22,7 +23,6 @@ const FALLBACK_STATE = {
   todayFocusRounds: 0,
   todayFocusMinutes: 0,
   statisticsDate: dateKey(new Date()),
-  dailyRecords: {},
   legacyFocusRounds: 0,
   alarm: false,
   collapsed: false,
@@ -45,52 +45,12 @@ function phaseDuration(state) {
 }
 
 function useAlarmSound(alarm) {
-  const contextRef = useRef(null)
-  const intervalRef = useRef(null)
-  const previousAlarm = useRef(false)
-
-  const primeAudio = () => {
-    if (!contextRef.current) {
-      contextRef.current = new AudioContext()
-    }
-    if (contextRef.current.state === 'suspended') contextRef.current.resume()
-  }
-
   useEffect(() => {
-    const playChime = () => {
-      const context = contextRef.current
-      if (!context || context.state !== 'running') return
-      const now = context.currentTime
-      ;[0, 0.18, 0.4].forEach((delay, index) => {
-        const oscillator = context.createOscillator()
-        const gain = context.createGain()
-        oscillator.type = 'sine'
-        oscillator.frequency.value = [659, 784, 988][index]
-        gain.gain.setValueAtTime(0.0001, now + delay)
-        gain.gain.exponentialRampToValueAtTime(0.22, now + delay + 0.02)
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.32)
-        oscillator.connect(gain).connect(context.destination)
-        oscillator.start(now + delay)
-        oscillator.stop(now + delay + 0.34)
-      })
-    }
-
-    if (alarm && !previousAlarm.current) {
-      playChime()
-      intervalRef.current = window.setInterval(playChime, 6000)
-    }
-    if (!alarm && intervalRef.current) {
-      window.clearInterval(intervalRef.current)
-      intervalRef.current = null
-    }
-    previousAlarm.current = alarm
-
-    return () => {
-      if (intervalRef.current) window.clearInterval(intervalRef.current)
-    }
+    if (!alarm) return undefined
+    const sound = createAlarmSound({ AudioContext: window.AudioContext, setInterval: window.setInterval, clearInterval: window.clearInterval })
+    void sound.start().catch(() => sound.stop())
+    return () => sound.stop()
   }, [alarm])
-
-  return primeAudio
 }
 
 function ProgressRing({ progress, children, compact = false }) {
@@ -201,12 +161,20 @@ function History({ state, onClose }) {
   const [month, setMonth] = useState(today.slice(0, 7))
   const [selectedDate, setSelectedDate] = useState(today)
   const cardRef = useRef(null)
-  const records = state.dailyRecords || {}
+  const [history, setHistory] = useState(null)
+  const records = history?.dailyRecords || {}
   const summary = monthSummary(records, month)
   const selected = records[selectedDate] || { focusRounds: 0, focusMinutes: 0 }
   const selectedLabel = new Date(`${selectedDate}T12:00:00`).toLocaleDateString('zh-CN', {
     month: 'long', day: 'numeric', weekday: 'short',
   })
+
+  useEffect(() => {
+    let cancelled = false
+    const request = window.pomodoro?.getHistory() || Promise.resolve({ dailyRecords: {}, legacyFocusRounds: 0 })
+    request.then((next) => { if (!cancelled) setHistory(next) })
+    return () => { cancelled = true }
+  }, [state.completedFocusRounds])
 
   useEffect(() => {
     const previousFocus = document.activeElement
@@ -281,10 +249,10 @@ function History({ state, onClose }) {
         <div className="history-detail" aria-live="polite">
           <span>{selectedLabel}{selectedDate === today ? ' · 今天' : ''}</span>
           <strong>{selected.focusRounds} 次专注 <i>·</i> {selected.focusMinutes} 分钟</strong>
-          <small>{selected.focusRounds ? '完成一轮专注，自动记一次打卡。' : '这一天还没有完成的专注记录。'}</small>
+          <small>{!history ? '正在读取打卡记录…' : selected.focusRounds ? '完成一轮专注，自动记一次打卡。' : '这一天还没有完成的专注记录。'}</small>
         </div>
         <p className="history-note">按本地日期统计，跨天专注记在完成的那一天。</p>
-        {state.legacyFocusRounds > 0 && <p className="history-legacy">升级前累计 {state.legacyFocusRounds} 次专注：旧版未保存日期，单独保留，不计入今日。</p>}
+        {history?.legacyFocusRounds > 0 && <p className="history-legacy">升级前累计 {history.legacyFocusRounds} 次专注：旧版未保存日期，单独保留，不计入今日。</p>}
       </section>
     </div>
   )
@@ -295,7 +263,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [ready, setReady] = useState(false)
-  const primeAudio = useAlarmSound(state.alarm)
+  useAlarmSound(state.alarm)
   const api = window.pomodoro
   const closeHistory = useCallback(() => setHistoryOpen(false), [])
 
@@ -329,14 +297,12 @@ function App() {
   }[state.status]
 
   const runAction = async (action) => {
-    primeAudio()
     if (!api) return
     const next = await action()
     setState(next)
   }
 
   const setWindowCollapsed = (nextCollapsed) => {
-    primeAudio()
     if (!api) {
       setState((current) => ({ ...current, collapsed: nextCollapsed }))
       return

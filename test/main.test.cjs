@@ -8,6 +8,7 @@ const vm = require('node:vm')
 function harness(persisted, initialTime = '2026-09-17T23:59:59') {
   let now = new Date(initialTime).getTime()
   let broadcasts = 0
+  let scheduled = null
   const files = new Map([['/isolated/timer-state.json', JSON.stringify(persisted)]])
   const handlers = new Map()
   const fakeElectron = {
@@ -27,7 +28,11 @@ function harness(persisted, initialTime = '2026-09-17T23:59:59') {
     constructor(...args) { super(...(args.length ? args : [now])) }
     static now() { return now }
   }
-  const context = vm.createContext({ Date: FakeDate, console, process: { platform: 'darwin', env: {} }, setInterval, clearInterval })
+  const context = vm.createContext({
+    Date: FakeDate, console, process: { platform: 'darwin', env: {} },
+    setTimeout: (callback, delay) => { scheduled = { callback, delay }; return 1 },
+    clearTimeout: () => { scheduled = null },
+  })
   const statisticsModule = { exports: {} }
   const statsSource = fs.readFileSync(path.join(__dirname, '../electron/statistics.cjs'), 'utf8')
   vm.runInContext(`(function(module) { ${statsSource}\n })`, context)(statisticsModule)
@@ -36,15 +41,17 @@ function harness(persisted, initialTime = '2026-09-17T23:59:59') {
   const timer = vm.runInContext(`(function(require) { ${mainSource}\n
     mainWindow = { isDestroyed: () => false, setBounds() {}, show() {}, focus() {}, webContents: { send: () => broadcastSpy() } };
     loadState(); registerIpc();
-    return { tick, getState: publicState };
+    return { tick, getState: publicState, getHistory: historyState };
   })`, vm.createContext({ ...context, broadcastSpy: () => { broadcasts += 1 } }))(requireMock)
   return {
     files,
     tick: timer.tick,
     getState: () => JSON.parse(JSON.stringify(timer.getState())),
+    getHistory: () => JSON.parse(JSON.stringify(timer.getHistory())),
     advance: (value) => { now = new Date(value).getTime() },
     call: (name, ...args) => handlers.get(name)(undefined, ...args),
     get broadcasts() { return broadcasts },
+    get nextDelay() { return scheduled?.delay },
   }
 }
 
@@ -106,7 +113,7 @@ test('overdue focus on reopen credits yesterday, not today', () => {
   const app = harness({ status: 'running', phase: 'focus', targetEndAt: new Date('2026-09-17T23:58:00').getTime() }, '2026-09-18T08:00:00')
   app.tick()
   assert.equal(app.getState().todayFocusRounds, 0)
-  assert.deepEqual(app.getState().dailyRecords['2026-09-17'], { focusRounds: 1, focusMinutes: 25 })
+  assert.deepEqual(app.getHistory().dailyRecords['2026-09-17'], { focusRounds: 1, focusMinutes: 25 })
 })
 
 test('rest completion, skipping and resetting never add check-ins', () => {
@@ -117,7 +124,7 @@ test('rest completion, skipping and resetting never add check-ins', () => {
   app.call('timer:skip')
   app.call('timer:reset')
   assert.equal(app.getState().completedFocusRounds, 0)
-  assert.deepEqual(app.getState().dailyRecords, {})
+  assert.deepEqual(app.getHistory().dailyRecords, {})
 })
 
 test('two full default cycles use four 25-minute focuses then a 25-minute long break', () => {
@@ -208,4 +215,47 @@ test('reset or skip at the fourth-focus alarm cannot bypass the long break', () 
     assert.equal(app.getState().cycleFocusRounds, 4)
     assert.equal(app.getState().alarm, false)
   }
+})
+
+test('calendar records are fetched on demand instead of with every timer update', () => {
+  const records = { '2026-09-17': { focusRounds: 2, focusMinutes: 50 } }
+  const app = harness({ statisticsVersion: 1, dailyRecords: records })
+  assert.equal('dailyRecords' in app.call('timer:get-state'), false)
+  assert.equal('dailyRecords' in app.call('timer:start'), false)
+  assert.deepEqual(JSON.parse(JSON.stringify(app.call('timer:get-history'))).dailyRecords, records)
+})
+
+test('expanded timer wakes on seconds and edge tab wakes on minutes', () => {
+  const app = harness({}, '2026-09-18T08:00:00')
+  app.call('timer:start')
+  assert.equal(app.nextDelay, 1000)
+  app.advance('2026-09-18T08:00:00.200')
+  app.tick()
+  assert.equal(app.nextDelay, 800)
+  app.call('window:set-collapsed', true)
+  assert.equal(app.nextDelay, 59_800)
+  app.call('window:set-collapsed', false)
+  assert.equal(app.nextDelay, 800)
+  app.call('timer:pause')
+  assert.equal(app.nextDelay, 60_000)
+})
+
+test('idle scheduler wakes at midnight and collapsed scheduler never passes the deadline', () => {
+  const idle = harness({})
+  idle.tick()
+  assert.equal(idle.nextDelay, 1000)
+  idle.advance('2026-09-18T00:00:00')
+  idle.tick()
+  assert.equal(idle.getState().todayFocusRounds, 0)
+  assert.equal(idle.nextDelay, 60_000)
+  const running = harness({ status: 'running', phase: 'focus', targetEndAt: new Date('2026-09-18T08:00:00.350').getTime() }, '2026-09-18T08:00:00')
+  running.call('window:set-collapsed', true)
+  assert.equal(running.nextDelay, 350)
+  running.advance('2026-09-18T08:00:00.350')
+  running.tick()
+  assert.equal(running.getState().alarm, true)
+  assert.equal(running.getState().collapsed, false)
+  assert.equal(running.getState().todayFocusRounds, 1)
+  running.tick()
+  assert.equal(running.getState().todayFocusRounds, 1)
 })
