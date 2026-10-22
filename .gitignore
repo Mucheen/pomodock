@@ -3,3 +3,9 @@ dist
 release
 .DS_Store
 *.log
+src-tauri/target
+src-tauri/gen/schemas
+src-tauri/icons/*
+!src-tauri/icons/icon.png
+!src-tauri/icons/icon.ico
+!src-tauri/icons/icon.icns

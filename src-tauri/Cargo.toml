@@ -1,0 +1,29 @@
+[package]
+name = "pomodock-lite"
+version = "0.3.0-beta.1"
+description = "A lightweight edge-docked Pomodoro timer"
+authors = ["muchen"]
+edition = "2021"
+license = "MIT"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+smoke-test = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["clock"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"
+strip = true
+panic = "abort"

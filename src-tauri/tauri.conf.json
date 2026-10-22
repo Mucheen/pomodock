@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Pomodock Lite",
+  "version": "0.3.0-beta.1",
+  "identifier": "com.pomodock.lite",
+  "build": {
+    "beforeDevCommand": "npm run dev:web",
+    "devUrl": "http://127.0.0.1:5188",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [{
+      "label": "main",
+      "title": "Pomodock Lite",
+      "width": 392,
+      "height": 620,
+      "decorations": false,
+      "transparent": true,
+      "resizable": false,
+      "maximizable": false,
+      "fullscreen": false,
+      "alwaysOnTop": true,
+      "skipTaskbar": true,
+      "visible": false,
+      "backgroundThrottling": "disabled"
+    }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; media-src 'self' blob:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis"],
+    "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "shortDescription": "轻量桌面番茄钟",
+    "category": "Productivity",
+    "copyright": "Copyright (c) 2026 muchen",
+    "resources": ["../LICENSE", "../THIRD_PARTY_NOTICES.txt"],
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": { "languages": ["SimpChinese", "English"], "displayLanguageSelector": false }
+    }
+  }
+}

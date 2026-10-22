@@ -1,0 +1,46 @@
+name: Build Lite under 50 MB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/lite-under-50mb]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - run: npm run lite:build -- --bundles nsis
+      - name: Enforce size budget and package portable binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release/lite | Out-Null
+          Copy-Item src-tauri/target/release/pomodock-lite.exe release/lite/Pomodock-Lite-0.3.0-beta.1-win-x64.exe
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          Copy-Item $installer.FullName release/lite/Pomodock-Lite-0.3.0-beta.1-win-x64-setup.exe
+          Copy-Item LICENSE,THIRD_PARTY_NOTICES.txt release/lite/
+          Get-ChildItem release/lite/*.exe | ForEach-Object {
+            if ($_.Length -ge 50000000) { throw "50 MB size budget exceeded: $($_.Name) = $($_.Length)" }
+            Write-Output "$($_.Name): $($_.Length) bytes"
+          }
+          Get-ChildItem release/lite/*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content -Encoding ascii release/lite/SHA256SUMS-windows.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pomodock-lite-windows-x64
+          path: release/lite/*
+          if-no-files-found: error
