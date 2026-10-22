@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev:web",
     "devUrl": "http://127.0.0.1:5188",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && npm run lite:licenses",
     "frontendDist": "../dist"
   },
   "app": {
@@ -37,7 +37,7 @@
     "shortDescription": "轻量桌面番茄钟",
     "category": "Productivity",
     "copyright": "Copyright (c) 2026 muchen",
-    "resources": ["../LICENSE", "../THIRD_PARTY_NOTICES.txt"],
+    "resources": ["../LICENSE", "../THIRD_PARTY_NOTICES.txt", "THIRD_PARTY_NOTICES.txt"],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": { "languages": ["SimpChinese", "English"], "displayLanguageSelector": false }

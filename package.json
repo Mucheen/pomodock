@@ -15,6 +15,7 @@
     "lite:dev": "tauri dev",
     "lite:build": "tauri build",
     "lite:test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "lite:licenses": "node scripts/lite-notices.cjs",
     "build": "vite build",
     "dist": "npm run build && electron-builder --config.electronDist=node_modules/electron/dist",
     "dist:mac": "npm run build && electron-builder --mac --config.electronDist=node_modules/electron/dist",
