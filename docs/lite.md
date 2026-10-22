@@ -4,7 +4,9 @@ Lite 复用现有 React 界面，使用 Tauri/Rust 和系统 WebView，避免在
 
 ## 大小目标
 
-下载包和应用可执行文件均以 **50,000,000 字节**为上限，Windows 构建会自动检查，超过即失败。Windows 使用系统共享的 Microsoft Edge WebView2：已安装时直接复用，未安装时安装程序会联网下载。WebView2 自身的共享磁盘占用不包含在此应用大小目标内；完整离线 WebView2 运行库不随 Lite 捆绑。
+下载包和应用可执行文件均要求严格低于 **50,000,000 字节**，Windows 构建会自动检查，达到或超过即失败。Windows 使用系统共享的 Microsoft Edge WebView2：已安装时直接复用，未安装时安装程序会联网下载。WebView2 自身的共享磁盘占用不包含在此应用大小目标内；完整离线 WebView2 运行库不随 Lite 捆绑。
+
+这是包体目标，不是运行内存保证。Windows 总进程内存尚未在真机测量；不同系统、WebView 版本和使用状态会影响结果。
 
 ## 数据
 
@@ -24,5 +26,13 @@ npm run lite:build
 ```
 
 Windows 构建由 `.github/workflows/lite.yml` 在 Windows 上执行；构建文件包括裸 EXE 和 NSIS 安装程序。裸 EXE 也依赖系统已安装 WebView2。安装程序更适合需要系统通知的用户。
+
+打包前会从锁定版本的 Rust crate 与 Tauri JS API 分发文件生成 `src-tauri/THIRD_PARTY_NOTICES.txt`，随应用包含，另外保留根目录的 React 许可声明。发布页同时提供许可证与第三方声明。
+
+## 验证范围
+
+35 项 JavaScript 测试与 9 项 Rust 测试在 macOS 和 Windows 构建环境通过。macOS 系统 WebView 的隔离数据冒烟测试通过，覆盖真实收起按钮、36×76 原生窗口、320×500 最小尺寸、尺寸恢复、后台到时自动展开及打卡日历。测试构建与发布构建分离。
+
+Windows 已通过原生编译、计时/存储测试和体积门禁，尚未完成 Windows 真机交互与内存测试，因此首先发布为预览版。安装包未配置商业代码签名或 macOS 公证；MIT 开源许可不代表操作系统安全认证。
 
 `POMODOCK_LITE_DATA_DIR` 可指定隔离的数据目录；设置该变量时不自动导入用户数据。`smoke-test` 是专用测试编译特性，正式发布构建不启用，也不包含测试命令。

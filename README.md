@@ -11,6 +11,10 @@
 
 > 当前公开构建尚未配置商业代码签名。macOS 或 Windows 首次启动时可能出现开发者或 SmartScreen 提示。
 
+### Lite 轻量预览版
+
+希望下载和应用体积低于 50 MB，可试用 [Pomodock Lite v0.3.0-beta.1](https://github.com/Mucheen/pomodock/releases/tag/v0.3.0-beta.1)。Lite 使用 Tauri/Rust 与系统 WebView；Windows 推荐 `win-x64-setup.exe`。缺少 WebView2 时安装程序需要联网安装共享运行库，该运行库占用不计入应用体积。这里的 50 MB 是包体目标，不是运行内存保证。详见 [Lite 说明](docs/lite.md)。v0.2.2 继续作为稳定版。
+
 ## 功能
 
 - 专注、短休息和长休息计时
