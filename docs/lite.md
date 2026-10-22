@@ -8,6 +8,17 @@ Lite 复用现有 React 界面，使用 Tauri/Rust 和系统 WebView，避免在
 
 这是包体目标，不是运行内存保证。Windows 总进程内存尚未在真机测量；不同系统、WebView 版本和使用状态会影响结果。
 
+v0.3.0-beta.1 实际发布文件（MB = 1,000,000 字节）：
+
+| 文件 | 字节 | MB |
+| --- | ---: | ---: |
+| Windows x64 安装程序 | 1,384,949 | 1.38 |
+| Windows x64 裸 EXE | 3,539,968 | 3.54 |
+| macOS arm64 DMG | 3,046,176 | 3.05 |
+| macOS arm64 ZIP | 2,389,778 | 2.39 |
+
+macOS 完整 `.app` 文件总量为 6,096,034 字节（6.10 MB）。Windows 裸 EXE 大小不等于包含共享运行库的总安装占用。Windows 发布文件来自[通过的原生构建](https://github.com/Mucheen/pomodock/actions/runs/39716282001)。
+
 ## 数据
 
 Lite 使用独立的 `com.pomodock.lite` 数据目录。首次启动会从 Electron 的 `pomodock/timer-state.json` 复制计时设置和打卡记录，并在 Lite 目录保存 `timer-state.imported-electron.json` 备份。后续只读写 Lite 数据，不会覆盖 Electron 原文件。迁移后两个版本的记录分别累计；迁移前应退出旧版，避免导入尚未保存的数据。
