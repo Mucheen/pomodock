@@ -19,7 +19,7 @@ jobs:
           node-version: '22'
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci --ignore-scripts
+      - run: npm ci --ignore-scripts --registry=https://registry.npmjs.org --no-audit --fetch-retries=1 --fetch-timeout=60000
       - run: npm test
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - run: npm run lite:build -- --bundles nsis

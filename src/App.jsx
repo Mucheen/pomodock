@@ -387,15 +387,9 @@ function App() {
       return
     }
 
-    if (nextCollapsed) {
-      setState((current) => ({ ...current, collapsed: true }))
-      window.requestAnimationFrame(() => {
-        api.setCollapsed(true).then(setState)
-      })
-      return
-    }
-
-    api.setCollapsed(false).then(setState)
+    // Native state events update the UI after the window is resized. Do not wait
+    // for requestAnimationFrame: WKWebView may suspend frames while unfocused.
+    api.setCollapsed(nextCollapsed).then(setState)
   }
 
   if (!ready) return null
