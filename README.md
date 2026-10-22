@@ -7,7 +7,7 @@
 前往 [Releases](https://github.com/Mucheen/pomodock/releases/latest) 下载最新版本：
 
 - macOS Apple Silicon：下载 `.dmg`，打开后将 Pomodock 拖入“应用程序”
-- Windows x64：下载 `portable.zip`，解压后运行 `Pomodock.exe`
+- Windows x64：推荐下载 `portable.exe`，直接运行；也可下载 `portable.zip`，解压后运行 `Pomodock.exe`
 
 > 当前公开构建尚未配置商业代码签名。macOS 或 Windows 首次启动时可能出现开发者或 SmartScreen 提示。
 
@@ -15,7 +15,8 @@
 
 - 专注、短休息和长休息计时
 - 默认循环：25 分钟专注，前 3 轮后短休息 5 分钟，第 4 轮后长休息 25 分钟，再开始下一组
-- 收起为屏幕右侧的常驻小标签
+- 收起为屏幕右侧 36×76 的小标签，按住可上下拖动，单击展开，并记住位置
+- 展开窗口支持拖动边缘或四角调整大小，最小 320×500，记住调整后的尺寸
 - 到时自动展开，并发送系统通知和提示音
 - 暂停、继续、重置与跳过当前阶段
 - 自定义各阶段时长和长休息间隔
@@ -59,7 +60,7 @@ npm run dist:mac
 npm run dist:win
 ```
 
-安装包由 electron-builder 生成。`dist:win` 建议在 Windows 上执行；也可以直接解压项目提供的 Windows portable ZIP 后运行 `Pomodock.exe`。正式公开分发时，需要分别配置 Apple Developer 签名/公证和 Windows 代码签名证书。
+安装包由 electron-builder 生成。`dist:win` 建议在 Windows 上执行；Windows portable EXE 无需安装、直接运行，portable ZIP 解压后运行 `Pomodock.exe`。构建只保留中英语言资源；React 已由 Vite 打包，不再重复放入运行依赖，相关许可保留在 `THIRD_PARTY_NOTICES.txt`。macOS DMG 使用 LZFSE 压缩，Windows portable EXE 使用 LZMA 自解压。正式公开分发时，需要分别配置 Apple Developer 签名/公证和 Windows 代码签名证书。
 
 ## 技术栈
 

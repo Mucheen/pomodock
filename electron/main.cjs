@@ -2,9 +2,8 @@ const { app, BrowserWindow, ipcMain, Menu, Notification, powerMonitor, screen } 
 const fs = require('node:fs')
 const path = require('node:path')
 const { normalizeStatistics, refreshStatisticsDate, recordFocusCompletion, statisticsSummary } = require('./statistics.cjs')
+const { EXPANDED_SIZE, normalizeEdgePosition, normalizeExpandedSize, edgeBounds, edgePositionAt, resizeBounds } = require('./edge-position.cjs')
 
-const COLLAPSED_SIZE = { width: 60, height: 148 }
-const EXPANDED_SIZE = { width: 392, height: 620 }
 const DEFAULT_CONFIG = {
   focusMinutes: 25,
   shortBreakMinutes: 5,
@@ -15,6 +14,8 @@ const DEFAULT_CONFIG = {
 let mainWindow
 let ticker
 let collapsed = false
+let edgeDrag = null
+let windowResize = null
 let state = createInitialState()
 
 if (!app.requestSingleInstanceLock()) app.exit(0)
@@ -31,6 +32,8 @@ function createInitialState() {
     cycleFocusRounds: 0,
     alarm: false,
     nextPhase: null,
+    edgePosition: null,
+    expandedSize: { ...EXPANDED_SIZE },
   }
 }
 
@@ -86,6 +89,8 @@ function loadState() {
       ? Math.min(state.config.roundsBeforeLongBreak, Math.max(0, persisted.cycleFocusRounds))
       : 0
     state.cycleVersion = 1
+    state.edgePosition = normalizeEdgePosition(persisted.edgePosition)
+    state.expandedSize = normalizeExpandedSize(persisted.expandedSize)
 
     if (!['focus', 'shortBreak', 'longBreak'].includes(state.phase)) state.phase = 'focus'
     if (!['idle', 'running', 'paused'].includes(state.status)) state.status = 'idle'
@@ -170,6 +175,8 @@ function notificationCopy(completedPhase) {
 }
 
 function showExpanded() {
+  endEdgeDrag()
+  endWindowResize()
   collapsed = false
   positionWindow(false)
   mainWindow.show()
@@ -292,12 +299,62 @@ function finishAlarm(startNext) {
 
 function positionWindow(shouldCollapse = collapsed) {
   if (!mainWindow || mainWindow.isDestroyed()) return
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-  const area = display.workArea
-  const size = shouldCollapse ? COLLAPSED_SIZE : EXPANDED_SIZE
-  const x = area.x + area.width - size.width
-  const y = Math.round(area.y + (area.height - size.height) / 2)
-  mainWindow.setBounds({ x, y, ...size }, false)
+  const display = edgeDisplay()
+  if (state.edgePosition && state.edgePosition.displayId !== display.id) {
+    state.edgePosition = { ...state.edgePosition, displayId: display.id }
+    saveState()
+  }
+  mainWindow.setBounds(edgeBounds(display, state.edgePosition, shouldCollapse, state.expandedSize), false)
+}
+
+function edgeDisplay() {
+  return screen.getAllDisplays().find((display) => display.id === state.edgePosition?.displayId)
+    || screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+}
+
+function beginEdgeDrag() {
+  if (!collapsed || !mainWindow || mainWindow.isDestroyed()) return
+  edgeDrag = {
+    display: edgeDisplay(),
+    cursorY: screen.getCursorScreenPoint().y,
+    windowY: mainWindow.getBounds().y,
+    moved: false,
+  }
+}
+
+function moveEdgeDrag() {
+  if (!edgeDrag || !collapsed) return
+  // Both coordinates come from Electron in DIP, including on scaled Windows displays.
+  const delta = screen.getCursorScreenPoint().y - edgeDrag.cursorY
+  if (!edgeDrag.moved && Math.abs(delta) < 4) return
+  edgeDrag.moved = true
+  state.edgePosition = edgePositionAt(edgeDrag.display, edgeDrag.windowY + delta)
+  positionWindow(true)
+}
+
+function endEdgeDrag() {
+  if (edgeDrag?.moved) saveState()
+  edgeDrag = null
+}
+
+function beginWindowResize(_event, direction) {
+  if (collapsed || !mainWindow || mainWindow.isDestroyed() || !['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].includes(direction)) return
+  const bounds = mainWindow.getBounds()
+  windowResize = { direction, bounds, cursor: screen.getCursorScreenPoint(), area: screen.getDisplayMatching(bounds).workArea, moved: false }
+}
+
+function moveWindowResize() {
+  if (!windowResize || collapsed) return
+  const cursor = screen.getCursorScreenPoint()
+  const next = resizeBounds(windowResize.bounds, windowResize.direction, { x: cursor.x - windowResize.cursor.x, y: cursor.y - windowResize.cursor.y }, windowResize.area)
+  state.expandedSize = { width: next.width, height: next.height }
+  windowResize.moved = true
+  mainWindow.setBounds(next, false)
+}
+
+function endWindowResize() {
+  if (windowResize?.moved) saveState()
+  windowResize = null
 }
 
 function createWindow() {
@@ -333,6 +390,8 @@ function createWindow() {
     tick()
   })
 
+  mainWindow.on('blur', () => { endEdgeDrag(); endWindowResize() })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -357,11 +416,19 @@ function registerIpc() {
   ipcMain.handle('timer:skip', skipPhase)
   ipcMain.handle('timer:finish-alarm', (_event, startNext) => finishAlarm(Boolean(startNext)))
   ipcMain.handle('window:set-collapsed', (_event, nextCollapsed) => {
+    endEdgeDrag()
+    endWindowResize()
     collapsed = Boolean(nextCollapsed)
     positionWindow(collapsed)
     broadcast()
     return publicState()
   })
+  ipcMain.on('window:edge-drag-start', beginEdgeDrag)
+  ipcMain.on('window:edge-drag-move', moveEdgeDrag)
+  ipcMain.on('window:edge-drag-end', endEdgeDrag)
+  ipcMain.on('window:resize-start', beginWindowResize)
+  ipcMain.on('window:resize-move', moveWindowResize)
+  ipcMain.on('window:resize-end', endWindowResize)
   ipcMain.handle('window:quit', () => app.quit())
 }
 
@@ -373,8 +440,9 @@ app.whenReady().then(() => {
   createWindow()
   scheduleTick()
   powerMonitor.on('resume', tick)
-  screen.on('display-metrics-changed', () => positionWindow(collapsed))
-  screen.on('display-removed', () => positionWindow(collapsed))
+  const reposition = () => { endEdgeDrag(); endWindowResize(); positionWindow(collapsed) }
+  screen.on('display-metrics-changed', reposition)
+  screen.on('display-removed', reposition)
 
   app.on('activate', () => {
     if (!mainWindow) createWindow()

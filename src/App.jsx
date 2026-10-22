@@ -54,8 +54,8 @@ function useAlarmSound(alarm) {
 }
 
 function ProgressRing({ progress, children, compact = false }) {
-  const radius = compact ? 20 : 112
-  const size = compact ? 48 : 250
+  const radius = compact ? 12 : 112
+  const size = compact ? 30 : 250
   const circumference = 2 * Math.PI * radius
   const dashOffset = circumference * (1 - Math.min(1, Math.max(0, progress)))
 
@@ -78,10 +78,54 @@ function ProgressRing({ progress, children, compact = false }) {
 }
 
 function CollapsedTimer({ state, onExpand }) {
+  const drag = useRef(null)
+  const suppressClick = useRef(false)
   const progress = state.remainingMs / phaseDuration(state)
   const phase = PHASES[state.phase]
+
+  useEffect(() => () => window.pomodoro?.endEdgeDrag(), [])
+
+  const finishDrag = (event, cancelled = false) => {
+    const current = drag.current
+    if (!current || current.pointerId !== event.pointerId) return
+    suppressClick.current = cancelled || current.moved
+    drag.current = null
+    event.currentTarget.releasePointerCapture(event.pointerId)
+    window.pomodoro?.endEdgeDrag()
+  }
+
   return (
-    <button className={`edge-tab edge-tab--${state.phase}`} onClick={onExpand} aria-label="展开番茄钟">
+    <button
+      className={`edge-tab edge-tab--${state.phase}`}
+      title="点击展开，按住上下拖动"
+      aria-label="展开番茄钟；按住可上下拖动"
+      onPointerDown={(event) => {
+        if (event.button !== 0 || !event.isPrimary) return
+        suppressClick.current = false
+        drag.current = { pointerId: event.pointerId, y: event.clientY, moved: false }
+        event.currentTarget.setPointerCapture(event.pointerId)
+        window.pomodoro?.beginEdgeDrag()
+      }}
+      onPointerMove={(event) => {
+        const current = drag.current
+        if (!current || current.pointerId !== event.pointerId) return
+        if (Math.abs(event.clientY - current.y) >= 4) current.moved = true
+        if (current.moved) window.pomodoro?.moveEdgeDrag()
+      }}
+      onPointerUp={finishDrag}
+      onPointerCancel={(event) => finishDrag(event, true)}
+      onLostPointerCapture={() => {
+        if (drag.current) {
+          suppressClick.current = true
+          drag.current = null
+          window.pomodoro?.endEdgeDrag()
+        }
+      }}
+      onClick={(event) => {
+        if (event.detail === 0 || !suppressClick.current) onExpand()
+        suppressClick.current = false
+      }}
+    >
       <span className="edge-tab__grip" />
       <ProgressRing progress={progress} compact>
         <span className="edge-tab__time">{Math.max(0, Math.ceil(state.remainingMs / 60_000))}</span>
@@ -90,6 +134,41 @@ function CollapsedTimer({ state, onExpand }) {
       <span className={`edge-tab__status ${state.status === 'running' ? 'is-running' : ''}`} />
     </button>
   )
+}
+
+function ResizeHandles() {
+  const activePointer = useRef(null)
+  useEffect(() => () => window.pomodoro?.endResize(), [])
+  const finish = (event) => {
+    if (activePointer.current !== event.pointerId) return
+    activePointer.current = null
+    event.currentTarget.releasePointerCapture(event.pointerId)
+    window.pomodoro?.endResize()
+  }
+  return ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map((direction) => (
+    <div
+      key={direction}
+      className={`resize-handle resize-handle--${direction}`}
+      title="拖动调整窗口大小"
+      onPointerDown={(event) => {
+        if (event.button !== 0 || !event.isPrimary) return
+        activePointer.current = event.pointerId
+        event.currentTarget.setPointerCapture(event.pointerId)
+        window.pomodoro?.beginResize(direction)
+      }}
+      onPointerMove={(event) => {
+        if (activePointer.current === event.pointerId) window.pomodoro?.moveResize()
+      }}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      onLostPointerCapture={() => {
+        if (activePointer.current !== null) {
+          activePointer.current = null
+          window.pomodoro?.endResize()
+        }
+      }}
+    />
+  ))
 }
 
 function Settings({ config, onSave, onClose }) {
@@ -381,7 +460,7 @@ function App() {
         <button className="secondary-button" onClick={() => runAction(() => api.skip())} aria-label="跳过当前阶段">↠</button>
       </section>
 
-      <footer className="hint"><span>→</span> 收起后，计时会继续在桌面后台运行</footer>
+      <footer className="hint"><span>↔</span> 拖动边缘调整大小 · 收起后继续计时</footer>
 
       {settingsOpen && (
         <Settings
@@ -392,6 +471,7 @@ function App() {
       )}
       {historyOpen && <History state={state} onClose={closeHistory} />}
       {state.alarm && <Alarm state={state} onFinish={(startNext) => runAction(() => api.finishAlarm(startNext))} />}
+      <ResizeHandles />
     </main>
   )
 }

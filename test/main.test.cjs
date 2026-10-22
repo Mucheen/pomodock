@@ -9,13 +9,16 @@ function harness(persisted, initialTime = '2026-09-17T23:59:59') {
   let now = new Date(initialTime).getTime()
   let broadcasts = 0
   let scheduled = null
+  let bounds = { x: 1008, y: 140, width: 392, height: 620 }
+  let cursor = { x: 1380, y: 450 }
+  let displays = [{ id: 1, workArea: { x: 0, y: 0, width: 1400, height: 900 } }]
   const files = new Map([['/isolated/timer-state.json', JSON.stringify(persisted)]])
   const handlers = new Map()
   const fakeElectron = {
     app: { requestSingleInstanceLock: () => true, getPath: () => '/isolated', whenReady: () => ({ then() {} }), on() {} },
-    ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler), on: (name, handler) => handlers.set(name, handler) },
     Notification: { isSupported: () => false },
-    screen: { getCursorScreenPoint: () => ({ x: 0, y: 0 }), getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1400, height: 900 } }) },
+    screen: { getCursorScreenPoint: () => cursor, getAllDisplays: () => displays, getDisplayNearestPoint: () => displays[0], getDisplayMatching: () => displays[0] },
   }
   const fakeFs = {
     readFileSync: (name) => { if (!files.has(name)) throw new Error('ENOENT'); return files.get(name) },
@@ -36,13 +39,13 @@ function harness(persisted, initialTime = '2026-09-17T23:59:59') {
   const statisticsModule = { exports: {} }
   const statsSource = fs.readFileSync(path.join(__dirname, '../electron/statistics.cjs'), 'utf8')
   vm.runInContext(`(function(module) { ${statsSource}\n })`, context)(statisticsModule)
-  const requireMock = (name) => ({ electron: fakeElectron, 'node:fs': fakeFs, 'node:path': path, './statistics.cjs': statisticsModule.exports })[name]
+  const requireMock = (name) => ({ electron: fakeElectron, 'node:fs': fakeFs, 'node:path': path, './statistics.cjs': statisticsModule.exports, './edge-position.cjs': require('../electron/edge-position.cjs') })[name]
   const mainSource = fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8')
   const timer = vm.runInContext(`(function(require) { ${mainSource}\n
-    mainWindow = { isDestroyed: () => false, setBounds() {}, show() {}, focus() {}, webContents: { send: () => broadcastSpy() } };
+    mainWindow = { isDestroyed: () => false, getBounds: getWindowBounds, setBounds: setWindowBounds, show() {}, focus() {}, webContents: { send: () => broadcastSpy() } };
     loadState(); registerIpc();
     return { tick, getState: publicState, getHistory: historyState };
-  })`, vm.createContext({ ...context, broadcastSpy: () => { broadcasts += 1 } }))(requireMock)
+  })`, vm.createContext({ ...context, broadcastSpy: () => { broadcasts += 1 }, getWindowBounds: () => bounds, setWindowBounds: (next) => { bounds = { ...next } } }))(requireMock)
   return {
     files,
     tick: timer.tick,
@@ -52,6 +55,9 @@ function harness(persisted, initialTime = '2026-09-17T23:59:59') {
     call: (name, ...args) => handlers.get(name)(undefined, ...args),
     get broadcasts() { return broadcasts },
     get nextDelay() { return scheduled?.delay },
+    get bounds() { return bounds },
+    cursor: (point) => { cursor = point },
+    displays: (next) => { displays = next },
   }
 }
 
@@ -258,4 +264,88 @@ test('idle scheduler wakes at midnight and collapsed scheduler never passes the 
   assert.equal(running.getState().todayFocusRounds, 1)
   running.tick()
   assert.equal(running.getState().todayFocusRounds, 1)
+})
+
+test('compact edge tab moves vertically, stays docked and persists after release', () => {
+  const app = harness({})
+  app.call('window:set-collapsed', true)
+  const start = app.bounds
+  assert.equal(start.width, 36)
+  assert.equal(start.height, 76)
+  app.call('window:edge-drag-start')
+  app.cursor({ x: 1000, y: 570 })
+  app.call('window:edge-drag-move')
+  assert.equal(app.bounds.x, 1364)
+  assert.equal(app.bounds.y, start.y + 120)
+  assert.equal(app.getState().collapsed, true)
+  app.call('window:edge-drag-end')
+  const saved = JSON.parse(app.files.get('/isolated/timer-state.json'))
+  assert.equal(saved.edgePosition.displayId, 1)
+  const reloaded = harness(saved)
+  reloaded.call('window:set-collapsed', true)
+  assert.deepEqual(reloaded.bounds, app.bounds)
+  app.call('window:set-collapsed', false)
+  app.call('window:set-collapsed', true)
+  assert.deepEqual(app.bounds, reloaded.bounds)
+})
+
+test('drag clamps to usable screen edges and does not count focus or change the deadline', () => {
+  const app = harness({}, '2026-09-18T08:00:00')
+  const deadline = app.call('timer:start').targetEndAt
+  app.call('window:set-collapsed', true)
+  app.call('window:edge-drag-start')
+  app.cursor({ x: 1380, y: -2000 })
+  app.call('window:edge-drag-move')
+  assert.equal(app.bounds.y, 0)
+  app.cursor({ x: 1380, y: 3000 })
+  app.call('window:edge-drag-move')
+  assert.equal(app.bounds.y, 824)
+  app.call('window:edge-drag-end')
+  assert.equal(app.getState().targetEndAt, deadline)
+  assert.equal(app.getState().todayFocusRounds, 0)
+  app.cursor({ x: 1380, y: 200 })
+  app.call('window:edge-drag-move')
+  assert.equal(app.bounds.y, 824)
+})
+
+test('a click does not move the tab and unplugging its display keeps it accessible', () => {
+  const app = harness({ edgePosition: { displayId: 2, ratio: 0.75 } })
+  app.displays([{ id: 2, workArea: { x: -1600, y: -100, width: 1600, height: 1000 } }])
+  app.call('window:set-collapsed', true)
+  const start = app.bounds
+  app.call('window:edge-drag-start')
+  app.cursor({ x: 1380, y: 452 })
+  app.call('window:edge-drag-move')
+  app.call('window:edge-drag-end')
+  assert.deepEqual(app.bounds, start)
+  app.displays([{ id: 3, workArea: { x: 0, y: 40, width: 1200, height: 800 } }])
+  app.call('window:set-collapsed', true)
+  assert.equal(app.bounds.x, 1164)
+  assert.equal(app.bounds.y, 583)
+  assert.equal(app.getState().edgePosition.displayId, 3)
+})
+
+test('expanded panel can be resized and keeps its size through collapse and restart', () => {
+  const app = harness({})
+  app.call('window:set-collapsed', false)
+  const before = app.bounds
+  app.call('window:resize-start', 'nw')
+  app.cursor({ x: 1280, y: 400 })
+  app.call('window:resize-move')
+  app.call('window:resize-end')
+  assert.equal(app.bounds.width, before.width + 100)
+  assert.equal(app.bounds.height, before.height + 50)
+  const size = { width: app.bounds.width, height: app.bounds.height }
+  app.call('window:set-collapsed', true)
+  assert.equal(app.bounds.width, 36)
+  app.call('window:resize-start', 'nw')
+  app.call('window:resize-move')
+  assert.equal(app.bounds.width, 36)
+  app.call('window:set-collapsed', false)
+  assert.equal(app.bounds.width, size.width)
+  assert.equal(app.bounds.height, size.height)
+  const reloaded = harness(JSON.parse(app.files.get('/isolated/timer-state.json')))
+  reloaded.call('window:set-collapsed', false)
+  assert.equal(reloaded.bounds.width, size.width)
+  assert.equal(reloaded.bounds.height, size.height)
 })

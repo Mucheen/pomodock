@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld('pomodoro', {
   skip: () => ipcRenderer.invoke('timer:skip'),
   finishAlarm: (startNext) => ipcRenderer.invoke('timer:finish-alarm', startNext),
   setCollapsed: (collapsed) => ipcRenderer.invoke('window:set-collapsed', collapsed),
+  beginEdgeDrag: () => ipcRenderer.send('window:edge-drag-start'),
+  moveEdgeDrag: () => ipcRenderer.send('window:edge-drag-move'),
+  endEdgeDrag: () => ipcRenderer.send('window:edge-drag-end'),
+  beginResize: (direction) => ipcRenderer.send('window:resize-start', direction),
+  moveResize: () => ipcRenderer.send('window:resize-move'),
+  endResize: () => ipcRenderer.send('window:resize-end'),
   quit: () => ipcRenderer.invoke('window:quit'),
   onState: (callback) => {
     const listener = (_event, state) => callback(state)

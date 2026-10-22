@@ -1,6 +1,6 @@
 {
   "name": "pomodock",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "author": "Pomodock",
   "license": "MIT",
@@ -20,6 +20,8 @@
     "appId": "com.pomodock.app",
     "productName": "Pomodock",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "compression": "maximum",
+    "electronLanguages": ["en-US", "zh-CN", "zh-TW", "zh_CN", "zh_TW"],
     "directories": {
       "output": "release"
     },
@@ -27,6 +29,7 @@
       "dist/**/*",
       "electron/**/*",
       "LICENSE",
+      "THIRD_PARTY_NOTICES.txt",
       "package.json"
     ],
     "mac": {
@@ -47,13 +50,17 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "dmg": {
+      "format": "ULFO"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-win-${arch}-portable.${ext}"
     }
   },
-  "dependencies": {
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0"
-  },
   "devDependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
     "cross-env": "^10.1.0",
