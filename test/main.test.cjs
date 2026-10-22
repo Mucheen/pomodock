@@ -39,7 +39,8 @@ function harness(persisted, initialTime = '2026-09-17T23:59:59') {
   const statisticsModule = { exports: {} }
   const statsSource = fs.readFileSync(path.join(__dirname, '../electron/statistics.cjs'), 'utf8')
   vm.runInContext(`(function(module) { ${statsSource}\n })`, context)(statisticsModule)
-  const requireMock = (name) => ({ electron: fakeElectron, 'node:fs': fakeFs, 'node:path': path, './statistics.cjs': statisticsModule.exports, './edge-position.cjs': require('../electron/edge-position.cjs') })[name]
+  // The in-memory filesystem uses POSIX keys even when this test runs on Windows.
+  const requireMock = (name) => ({ electron: fakeElectron, 'node:fs': fakeFs, 'node:path': path.posix, './statistics.cjs': statisticsModule.exports, './edge-position.cjs': require('../electron/edge-position.cjs') })[name]
   const mainSource = fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8')
   const timer = vm.runInContext(`(function(require) { ${mainSource}\n
     mainWindow = { isDestroyed: () => false, getBounds: getWindowBounds, setBounds: setWindowBounds, show() {}, focus() {}, webContents: { send: () => broadcastSpy() } };
