@@ -5,20 +5,30 @@ const path = require('node:path')
 const vm = require('node:vm')
 
 // Run the real main-process logic with an isolated in-memory disk and clock.
-function harness(persisted, initialTime = '2026-09-17T23:59:59') {
+function harness(persisted, initialTime = '2026-09-17T23:59:59', initialDisplays) {
   let now = new Date(initialTime).getTime()
   let broadcasts = 0
   let scheduled = null
   let bounds = { x: 1008, y: 140, width: 392, height: 620 }
   let cursor = { x: 1380, y: 450 }
-  let displays = [{ id: 1, workArea: { x: 0, y: 0, width: 1400, height: 900 } }]
+  let displays = initialDisplays || [{ id: 1, workArea: { x: 0, y: 0, width: 1400, height: 900 } }]
+  function matchingDisplay(rect) {
+    const overlap = (area) => Math.max(0, Math.min(rect.x + rect.width, area.x + area.width) - Math.max(rect.x, area.x))
+      * Math.max(0, Math.min(rect.y + rect.height, area.y + area.height) - Math.max(rect.y, area.y))
+    const distance = (area) => {
+      const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2
+      return Math.max(area.x - x, 0, x - area.x - area.width) ** 2 + Math.max(area.y - y, 0, y - area.y - area.height) ** 2
+    }
+    return [...displays].sort((a, b) => overlap(b.workArea) - overlap(a.workArea) || distance(a.workArea) - distance(b.workArea))[0]
+  }
   const files = new Map([['/isolated/timer-state.json', JSON.stringify(persisted)]])
   const handlers = new Map()
   const fakeElectron = {
     app: { requestSingleInstanceLock: () => true, getPath: () => '/isolated', whenReady: () => ({ then() {} }), on() {} },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler), on: (name, handler) => handlers.set(name, handler) },
     Notification: { isSupported: () => false },
-    screen: { getCursorScreenPoint: () => cursor, getAllDisplays: () => displays, getDisplayNearestPoint: () => displays[0], getDisplayMatching: () => displays[0] },
+    screen: { getCursorScreenPoint: () => cursor, getAllDisplays: () => displays,
+      getDisplayNearestPoint: (point) => matchingDisplay({ ...point, width: 1, height: 1 }), getDisplayMatching: matchingDisplay },
   }
   const fakeFs = {
     readFileSync: (name) => { if (!files.has(name)) throw new Error('ENOENT'); return files.get(name) },
@@ -44,7 +54,7 @@ function harness(persisted, initialTime = '2026-09-17T23:59:59') {
   const mainSource = fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8')
   const timer = vm.runInContext(`(function(require) { ${mainSource}\n
     mainWindow = { isDestroyed: () => false, getBounds: getWindowBounds, setBounds: setWindowBounds, show() {}, focus() {}, webContents: { send: () => broadcastSpy() } };
-    loadState(); registerIpc();
+    loadState(); registerIpc(); positionWindow(false, true);
     return { tick, getState: publicState, getHistory: historyState };
   })`, vm.createContext({ ...context, broadcastSpy: () => { broadcasts += 1 }, getWindowBounds: () => bounds, setWindowBounds: (next) => { bounds = { ...next } } }))(requireMock)
   return {
@@ -59,6 +69,7 @@ function harness(persisted, initialTime = '2026-09-17T23:59:59') {
     get bounds() { return bounds },
     cursor: (point) => { cursor = point },
     displays: (next) => { displays = next },
+    moveWindow: (next) => { bounds = { ...bounds, ...next } },
   }
 }
 
@@ -310,8 +321,8 @@ test('drag clamps to usable screen edges and does not count focus or change the 
 })
 
 test('a click does not move the tab and unplugging its display keeps it accessible', () => {
-  const app = harness({ edgePosition: { displayId: 2, ratio: 0.75 } })
-  app.displays([{ id: 2, workArea: { x: -1600, y: -100, width: 1600, height: 1000 } }])
+  const app = harness({ edgePosition: { displayId: 2, ratio: 0.75 } }, undefined,
+    [{ id: 2, workArea: { x: -1600, y: -100, width: 1600, height: 1000 } }])
   app.call('window:set-collapsed', true)
   const start = app.bounds
   app.call('window:edge-drag-start')
@@ -324,6 +335,65 @@ test('a click does not move the tab and unplugging its display keeps it accessib
   assert.equal(app.bounds.x, 1164)
   assert.equal(app.bounds.y, 583)
   assert.equal(app.getState().edgePosition.displayId, 3)
+})
+
+test('collapse follows the expanded window across screens, not the saved screen or cursor', () => {
+  const displays = [
+    { id: 1, workArea: { x: 0, y: 0, width: 1400, height: 900 } },
+    { id: 2, workArea: { x: -1600, y: -100, width: 1600, height: 1000 } },
+  ]
+  const app = harness({ edgePosition: { displayId: 1, ratio: 0.5 } }, undefined, displays)
+  const deadline = app.call('timer:start').targetEndAt
+  app.moveWindow({ x: -1200, y: 100 })
+  app.cursor({ x: 1200, y: 450 }) // Cursor remains on A; the window is on B.
+  app.call('window:set-collapsed', true)
+  assert.equal(app.bounds.x, -36)
+  assert.equal(app.bounds.y, 372) // Preserve the moved window's vertical center.
+  assert.equal(app.getState().edgePosition.displayId, 2)
+  assert.equal(app.getState().targetEndAt, deadline)
+  assert.equal(app.getState().todayFocusRounds, 0)
+  const saved = JSON.parse(app.files.get('/isolated/timer-state.json'))
+  assert.equal(saved.edgePosition.displayId, 2)
+  const compact = app.bounds
+  app.call('window:set-collapsed', false)
+  app.call('window:set-collapsed', true)
+  assert.deepEqual(app.bounds, compact)
+  const reloaded = harness(saved, undefined, displays)
+  reloaded.call('window:set-collapsed', true)
+  assert.deepEqual(reloaded.bounds, compact)
+})
+
+test('collapse follows a vertically stacked screen and current-screen resize does not jump back', () => {
+  const displays = [
+    { id: 1, workArea: { x: 0, y: 0, width: 1400, height: 900 } },
+    { id: 2, workArea: { x: 100, y: -1200, width: 1800, height: 1100 } },
+  ]
+  const app = harness({ edgePosition: { displayId: 1, ratio: 1 } }, undefined, displays)
+  app.moveWindow({ x: 1000, y: -1000 })
+  app.call('window:set-collapsed', true)
+  assert.equal(app.bounds.x, 1864)
+  assert.equal(app.bounds.y, -728)
+  app.call('window:set-collapsed', false)
+  const before = app.bounds
+  app.call('window:resize-start', 'nw')
+  app.cursor({ x: 1280, y: 400 })
+  app.call('window:resize-move')
+  app.call('window:resize-end')
+  assert.ok(app.bounds.y < 0)
+  assert.equal(app.bounds.x + app.bounds.width, before.x + before.width)
+})
+
+test('repeated collapse keeps top and bottom anchors when the expanded window is clamped', () => {
+  for (const ratio of [0, 1]) {
+    const app = harness({ edgePosition: { displayId: 1, ratio } })
+    app.call('window:set-collapsed', true)
+    const initial = app.bounds
+    for (let i = 0; i < 3; i++) {
+      app.call('window:set-collapsed', false)
+      app.call('window:set-collapsed', true)
+      assert.deepEqual(app.bounds, initial)
+    }
+  }
 })
 
 test('expanded panel can be resized and keeps its size through collapse and restart', () => {

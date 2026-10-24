@@ -1,4 +1,4 @@
-use crate::{engine::{self, Tick, Timer}, storage};
+use crate::{engine::{self, Tick, Timer}, storage, window_geometry::{self, Bounds}};
 use serde_json::Value;
 use std::{path::PathBuf, sync::Mutex, thread, time::Duration};
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
@@ -24,23 +24,36 @@ type Shared = Mutex<Runtime>;
 
 fn error(e: impl std::fmt::Display) -> String { e.to_string() }
 
-fn monitor(window: &WebviewWindow, timer: &Timer) -> Result<tauri::Monitor, String> {
+fn monitor(window: &WebviewWindow, timer: &Timer, restoring: bool) -> Result<tauri::Monitor, String> {
     let monitors = window.available_monitors().map_err(error)?;
-    monitors.iter().find(|m| timer.edge_position.monitor_name.is_some() && m.name() == timer.edge_position.monitor_name.as_ref()).cloned()
-        .or_else(|| window.current_monitor().ok().flatten())
-        .or_else(|| monitors.first().cloned()).ok_or_else(|| "No display available".into())
+    let remembered = monitors.iter().find(|m| timer.edge_position.monitor_name.is_some() && m.name() == timer.edge_position.monitor_name.as_ref()).cloned();
+    window_geometry::choose_monitor(window.current_monitor().ok().flatten(), remembered, monitors.first().cloned(), restoring)
+        .ok_or_else(|| "No display available".into())
 }
 
-fn place(window: &WebviewWindow, timer: &Timer) -> Result<(), String> {
-    let display = monitor(window, timer)?;
-    let scale = display.scale_factor();
+fn work_area(display: &tauri::Monitor) -> Bounds {
     let area = display.work_area();
-    let width = if timer.collapsed { 36.0 } else { timer.expanded_size.width.min(area.size.width as f64 / scale) };
-    let height = if timer.collapsed { 76.0 } else { timer.expanded_size.height.min(area.size.height as f64 / scale) };
-    let tab_y = area.position.y as f64 + (area.size.height as f64 - 76.0 * scale).max(0.0) * timer.edge_position.ratio;
-    let y = (tab_y + 38.0 * scale - height * scale / 2.0).clamp(area.position.y as f64, area.position.y as f64 + (area.size.height as f64 - height * scale).max(0.0));
-    window.set_size(PhysicalSize::new((width * scale).round() as u32, (height * scale).round() as u32)).map_err(error)?;
-    window.set_position(PhysicalPosition::new(area.position.x + area.size.width as i32 - (width * scale).round() as i32, y.round() as i32)).map_err(error)
+    Bounds { x:area.position.x as f64, y:area.position.y as f64, width:area.size.width as f64, height:area.size.height as f64 }
+}
+
+fn remember_window(window: &WebviewWindow, timer: &mut Timer) -> Result<(), String> {
+    let display = monitor(window, timer, false)?;
+    let area = work_area(&display);
+    let position = window.outer_position().map_err(error)?;
+    let size = window.outer_size().map_err(error)?;
+    let actual = Bounds { x:position.x as f64, y:position.y as f64, width:size.width as f64, height:size.height as f64 };
+    let expected = window_geometry::dock_bounds(area, display.scale_factor(), (timer.expanded_size.width,timer.expanded_size.height), timer.edge_position.ratio, false);
+    timer.edge_position.ratio = window_geometry::capture_ratio(actual, expected, area, display.scale_factor(), timer.edge_position.ratio);
+    timer.edge_position.monitor_name = display.name().cloned();
+    Ok(())
+}
+
+fn place(window: &WebviewWindow, timer: &Timer, restoring: bool) -> Result<(), String> {
+    let display = monitor(window, timer, restoring)?;
+    let scale = display.scale_factor();
+    let bounds = window_geometry::dock_bounds(work_area(&display), scale, (timer.expanded_size.width,timer.expanded_size.height), timer.edge_position.ratio, timer.collapsed);
+    window.set_size(PhysicalSize::new(bounds.width as u32, bounds.height as u32)).map_err(error)?;
+    window.set_position(PhysicalPosition::new(bounds.x as i32, bounds.y as i32)).map_err(error)
 }
 
 fn publish(window: &WebviewWindow, timer: &Timer) -> Result<(), String> {
@@ -62,8 +75,11 @@ fn timer_action(window: WebviewWindow, shared: tauri::State<Shared>, action: Str
     let mut runtime = shared.lock().map_err(error)?;
     let now=engine::now();
     runtime.timer.tick(now);
+    if action == "collapse" && payload.as_bool() == Some(true) && !runtime.timer.collapsed {
+        remember_window(&window, &mut runtime.timer)?;
+    }
     runtime.timer.action(&action, &payload, now)?;
-    if action == "collapse" { runtime.gesture = None; place(&window, &runtime.timer)?; }
+    if action == "collapse" { runtime.gesture = None; place(&window, &runtime.timer, false)?; }
     storage::save(&runtime.directory, &runtime.timer)?;
     publish(&window, &runtime.timer)?;
     Ok(runtime.timer.public(engine::now()))
@@ -81,7 +97,7 @@ fn quit(app: tauri::AppHandle, shared: tauri::State<Shared>) -> Result<(), Strin
 fn gesture_start(window: WebviewWindow, shared: tauri::State<Shared>, kind: String) -> Result<(), String> {
     let mut runtime = shared.lock().map_err(error)?;
     if (runtime.timer.collapsed && kind != "drag") || (!runtime.timer.collapsed && !["n","s","e","w","ne","nw","se","sw"].contains(&kind.as_str())) { return Ok(()); }
-    let display = monitor(&window, &runtime.timer)?;
+    let display = monitor(&window, &runtime.timer, false)?;
     let cursor = window.cursor_position().map_err(error)?;
     let position = window.outer_position().map_err(error)?;
     let size = window.outer_size().map_err(error)?;
@@ -101,7 +117,7 @@ fn gesture_move(window: WebviewWindow, shared: tauri::State<Shared>) -> Result<(
         if !gesture.moved && dy.abs() < 4.0 * gesture.scale { return Ok(()); }
         let travel = (gesture.area.3 - 76.0 * gesture.scale).max(0.0);
         runtime.timer.edge_position.ratio = if travel > 0.0 { ((gesture.bounds.1 + dy - gesture.area.1) / travel).clamp(0.0,1.0) } else { 0.0 };
-        place(&window, &runtime.timer)?;
+        place(&window, &runtime.timer, false)?;
     } else {
         let (mut x,mut y,w,h)=gesture.bounds; let mut right=x+w; let mut bottom=y+h;
         let min_w=(320.0 * gesture.scale).min(gesture.area.2);
@@ -135,7 +151,7 @@ fn expand(app: &tauri::AppHandle) {
         } else { None };
         // Never hold the timer mutex while a background thread waits on the UI.
         if let Some(timer)=timer {
-            if let Err(e)=place(&window,&timer).and_then(|_|publish(&window,&timer)) { eprintln!("{e}"); }
+            if let Err(e)=place(&window,&timer,false).and_then(|_|publish(&window,&timer)) { eprintln!("{e}"); }
         }
         let _=window.show(); let _=window.set_focus();
     }
@@ -154,7 +170,7 @@ pub fn run() {
             let window=app.get_webview_window("main").unwrap();
             {
                 let shared=app.state::<Shared>(); let runtime=shared.lock().unwrap();
-                place(&window,&runtime.timer).map_err(std::io::Error::other)?;
+                place(&window,&runtime.timer,true).map_err(std::io::Error::other)?;
             }
             let _=window.set_visible_on_all_workspaces(true);
             window.show()?;
@@ -225,8 +241,23 @@ fn smoke_step(app: tauri::AppHandle, window: WebviewWindow, shared: tauri::State
             let mut runtime=shared.lock().map_err(error)?;
             runtime.timer.expanded_size=crate::engine::ExpandedSize { width:320.0,height:500.0 };
             runtime.timer.edge_position.ratio=0.2;
-            place(&window,&runtime.timer)?;
+            place(&window,&runtime.timer,false)?;
             storage::save(&runtime.directory,&runtime.timer)?;
+        }
+        "move-window" => {
+            let mut runtime = shared.lock().map_err(error)?;
+            let original = monitor(&window, &runtime.timer, false)?;
+            let displays = window.available_monitors().map_err(error)?;
+            let target = displays.iter().find(|d| work_area(d) != work_area(&original)).cloned().unwrap_or_else(|| original.clone());
+            let area = work_area(&target);
+            let scale = target.scale_factor();
+            let width = (runtime.timer.expanded_size.width * scale).min(area.width).round();
+            let height = (runtime.timer.expanded_size.height * scale).min(area.height).round();
+            // Simulate a native title-bar move, deliberately keeping stale memory.
+            runtime.timer.edge_position.monitor_name = original.name().cloned();
+            window.set_size(PhysicalSize::new(width as u32, height as u32)).map_err(error)?;
+            window.set_position(PhysicalPosition::new((area.x + (area.width-width).max(0.0)/4.0).round() as i32, (area.y + (area.height-height).max(0.0)/4.0).round() as i32)).map_err(error)?;
+            return Ok(json!({"crossScreen":work_area(&original)!=area,"monitorCount":displays.len(),"target":{"x":area.x,"y":area.y,"width":area.width,"height":area.height},"targetName":target.name()}));
         }
         "bounds" => {
             return Ok(json!({"size":window.inner_size().map_err(error)?,"position":window.outer_position().map_err(error)?,"scale":window.scale_factor().map_err(error)?}));

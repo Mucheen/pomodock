@@ -15,10 +15,19 @@
     const history=await api.getHistory()
     check(history.dailyRecords['2026-10-20'].focusRounds === 2, 'history available')
     steps.push('native timer and history')
+    const movement=await invoke('smoke_step',{step:'move-window',payload:null}); await wait(300)
     document.querySelector('[aria-label="收起到屏幕边缘"]').click(); await wait(300)
     const compact=await invoke('smoke_step',{step:'bounds',payload:null})
     check(Math.round(compact.size.width/compact.scale)===36 && Math.round(compact.size.height/compact.scale)===76,'compact dimensions')
+    check(Math.abs(compact.position.x-(movement.target.x+movement.target.width-compact.size.width))<=2,'collapse stays on moved-to monitor, not saved monitor')
+    check(compact.position.y>=movement.target.y && compact.position.y+compact.size.height<=movement.target.y+movement.target.height,'compact tab inside target work area')
     check(!!document.querySelector('.edge-tab'), 'compact UI rendered')
+    for(let i=0;i<2;i++) {
+      await api.setCollapsed(false); await api.setCollapsed(true); await wait(100)
+      const toggled=await invoke('smoke_step',{step:'bounds',payload:null})
+      check(toggled.position.x===compact.position.x && Math.abs(toggled.position.y-compact.position.y)<=1,'repeated toggles keep monitor and anchor')
+    }
+    steps.push(movement.crossScreen ? 'native cross-screen move and collapse' : 'native move and collapse (single display; cross-screen geometry unit-tested)')
     document.querySelector('.edge-tab').click(); await wait(200)
     await invoke('smoke_step',{step:'resize',payload:null}); await wait(200)
     const size=await invoke('smoke_step',{step:'bounds',payload:null})
@@ -36,7 +45,7 @@
     document.querySelector('.session-progress').click(); await wait(300)
     check(!!document.querySelector('.history-day.has-record'),'calendar rendered')
     steps.push('completion alarm and calendar')
-    await invoke('smoke_step',{step:'finish',payload:{passed:true,steps,userAgent:navigator.userAgent}})
+    await invoke('smoke_step',{step:'finish',payload:{passed:true,steps,movement,userAgent:navigator.userAgent}})
   } catch (error) {
     await invoke('smoke_step',{step:'finish',payload:{passed:false,steps,error:String(error)}})
   }

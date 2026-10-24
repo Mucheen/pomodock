@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { edgeBounds, edgePositionAt, normalizeEdgePosition, normalizeExpandedSize, resizeBounds } = require('../electron/edge-position.cjs')
+const { edgeBounds, edgePositionAt, edgePositionFromWindow, normalizeEdgePosition, normalizeExpandedSize, resizeBounds } = require('../electron/edge-position.cjs')
 
 test('edge placement honors work area offsets and clamps the expanded panel', () => {
   const display = { id: 7, workArea: { x: -1600, y: 40, width: 1600, height: 900 } }
@@ -29,4 +29,21 @@ test('resizing clamps every edge and keeps the opposite corner fixed', () => {
   assert.deepEqual(normalizeExpandedSize({ width: -10, height: 5 }), { width: 320, height: 500 })
   assert.deepEqual(normalizeExpandedSize({ width: NaN, height: 800 }), { width: 392, height: 620 })
   assert.equal(edgeBounds({ id: 1, workArea: area }, null, false, { width: 2000, height: 2000 }).width, 1400)
+})
+
+test('moving horizontally preserves a top-clamped vertical anchor', () => {
+  const display = { id: 1, workArea: { x: 0, y: 40, width: 1400, height: 900 } }
+  const previous = { displayId: 1, ratio: 0 }
+  const bounds = { ...edgeBounds(display, previous, false), x: 100 }
+  assert.deepEqual(edgePositionFromWindow(display, bounds, previous), previous)
+})
+
+test('remembering a moved window uses its center and does not project an unplugged screen onto another', () => {
+  const display = { id: 2, workArea: { x: -1600, y: -100, width: 1600, height: 1000 } }
+  const previous = { displayId: 1, ratio: 0.5 }
+  const bounds = { x: -1200, y: 100, width: 392, height: 620 }
+  const captured = edgePositionFromWindow(display, bounds, previous)
+  assert.equal(captured.displayId, 2)
+  assert.equal(edgeBounds(display, captured, true).y, 372)
+  assert.deepEqual(edgePositionFromWindow(display, { ...bounds, x: 1200 }, previous), { displayId: 2, ratio: 0.5 })
 })

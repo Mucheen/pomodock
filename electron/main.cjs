@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, Menu, Notification, powerMonitor, screen } 
 const fs = require('node:fs')
 const path = require('node:path')
 const { normalizeStatistics, refreshStatisticsDate, recordFocusCompletion, statisticsSummary } = require('./statistics.cjs')
-const { EXPANDED_SIZE, normalizeEdgePosition, normalizeExpandedSize, edgeBounds, edgePositionAt, resizeBounds } = require('./edge-position.cjs')
+const { EXPANDED_SIZE, normalizeEdgePosition, normalizeExpandedSize, edgeBounds, edgePositionAt, edgePositionFromWindow, resizeBounds } = require('./edge-position.cjs')
 
 const DEFAULT_CONFIG = {
   focusMinutes: 25,
@@ -297,9 +297,9 @@ function finishAlarm(startNext) {
   return publicState()
 }
 
-function positionWindow(shouldCollapse = collapsed) {
+function positionWindow(shouldCollapse = collapsed, restoring = false) {
   if (!mainWindow || mainWindow.isDestroyed()) return
-  const display = edgeDisplay()
+  const display = edgeDisplay(restoring)
   if (state.edgePosition && state.edgePosition.displayId !== display.id) {
     state.edgePosition = { ...state.edgePosition, displayId: display.id }
     saveState()
@@ -307,9 +307,11 @@ function positionWindow(shouldCollapse = collapsed) {
   mainWindow.setBounds(edgeBounds(display, state.edgePosition, shouldCollapse, state.expandedSize), false)
 }
 
-function edgeDisplay() {
-  return screen.getAllDisplays().find((display) => display.id === state.edgePosition?.displayId)
-    || screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+function edgeDisplay(restoring = false) {
+  const remembered = screen.getAllDisplays().find((display) => display.id === state.edgePosition?.displayId)
+  if (restoring) return remembered || screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  return (mainWindow && !mainWindow.isDestroyed() && screen.getDisplayMatching(mainWindow.getBounds()))
+    || remembered || screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
 }
 
 function beginEdgeDrag() {
@@ -380,7 +382,7 @@ function createWindow() {
   mainWindow.setAlwaysOnTop(true, 'floating')
   if (process.platform === 'darwin') mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
-  positionWindow(collapsed)
+  positionWindow(collapsed, true)
   const rendererUrl = process.env.ELECTRON_RENDERER_URL
   if (rendererUrl) mainWindow.loadURL(rendererUrl)
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
@@ -418,8 +420,12 @@ function registerIpc() {
   ipcMain.handle('window:set-collapsed', (_event, nextCollapsed) => {
     endEdgeDrag()
     endWindowResize()
+    if (nextCollapsed && !collapsed && mainWindow && !mainWindow.isDestroyed()) {
+      state.edgePosition = edgePositionFromWindow(edgeDisplay(), mainWindow.getBounds(), state.edgePosition, state.expandedSize)
+    }
     collapsed = Boolean(nextCollapsed)
     positionWindow(collapsed)
+    saveState()
     broadcast()
     return publicState()
   })

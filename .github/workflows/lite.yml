@@ -27,9 +27,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release/lite | Out-Null
-          Copy-Item src-tauri/target/release/pomodock-lite.exe release/lite/Pomodock-Lite-0.3.0-beta.1-win-x64.exe
+          Copy-Item src-tauri/target/release/pomodock-lite.exe release/lite/Pomodock-Lite-0.3.0-beta.2-win-x64.exe
           $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
-          Copy-Item $installer.FullName release/lite/Pomodock-Lite-0.3.0-beta.1-win-x64-setup.exe
+          Copy-Item $installer.FullName release/lite/Pomodock-Lite-0.3.0-beta.2-win-x64-setup.exe
           Copy-Item LICENSE,THIRD_PARTY_NOTICES.txt release/lite/
           Copy-Item src-tauri/THIRD_PARTY_NOTICES.txt release/lite/THIRD_PARTY_NOTICES-Lite.txt
           Get-ChildItem release/lite/*.exe | ForEach-Object {

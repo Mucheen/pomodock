@@ -1,6 +1,6 @@
 [package]
 name = "pomodock-lite"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.2"
 description = "A lightweight edge-docked Pomodoro timer"
 authors = ["muchen"]
 edition = "2021"

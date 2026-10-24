@@ -29,6 +29,19 @@ function edgePositionAt(display, y) {
   return { displayId: display.id, ratio: travel ? clamp((y - display.workArea.y) / travel, 0, 1) : 0 }
 }
 
+function edgePositionFromWindow(display, bounds, previous, expandedSize) {
+  const expected = edgeBounds(display, previous, false, expandedSize)
+  const area = display.workArea
+  const intersects = bounds.x < area.x + area.width && bounds.x + bounds.width > area.x
+    && bounds.y < area.y + area.height && bounds.y + bounds.height > area.y
+  // Expanding near an edge clamps the large panel. Do not turn that clamp into
+  // a new tab position on every collapse, or top/bottom anchors slowly drift.
+  if (!intersects || (Math.abs(bounds.y - expected.y) <= 1 && Math.abs(bounds.height - expected.height) <= 1)) {
+    return { displayId: display.id, ratio: normalizeEdgePosition(previous)?.ratio ?? 0.5 }
+  }
+  return edgePositionAt(display, bounds.y + bounds.height / 2 - COLLAPSED_SIZE.height / 2)
+}
+
 function resizeBounds(bounds, direction, delta, area) {
   const minWidth = Math.min(MIN_EXPANDED_SIZE.width, area.width)
   const minHeight = Math.min(MIN_EXPANDED_SIZE.height, area.height)
@@ -40,4 +53,4 @@ function resizeBounds(bounds, direction, delta, area) {
   return { x: Math.round(left), y: Math.round(top), width: Math.round(right - left), height: Math.round(bottom - top) }
 }
 
-module.exports = { COLLAPSED_SIZE, EXPANDED_SIZE, normalizeEdgePosition, normalizeExpandedSize, edgeBounds, edgePositionAt, resizeBounds }
+module.exports = { COLLAPSED_SIZE, EXPANDED_SIZE, normalizeEdgePosition, normalizeExpandedSize, edgeBounds, edgePositionAt, edgePositionFromWindow, resizeBounds }
